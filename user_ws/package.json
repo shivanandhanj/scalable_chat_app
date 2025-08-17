@@ -1,0 +1,19 @@
+{
+  "name": "user_ws",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "jest": "^30.0.5"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
