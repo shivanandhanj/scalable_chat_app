@@ -1,59 +1,67 @@
-const  {WebSocketServer,WebSocket}  =require("ws");
+const { WebSocketServer, WebSocket } = require("ws");
 
-const wss = new WebSocketServer({ port: 8080 });
+const PORT = process.env.PORT || 8080;
+const SERVER_ID = `server-${PORT}`;
 
-// Room type: { sockets: WebSocket[] }
-const rooms = {};
+// Connect to relayer
+const relayer = new WebSocket("ws://localhost:9000");
 
-wss.on('connection',(ws)=>{
-    ws.on('error',console.error);
-    console.log('New client connected');
-    ws.room=null;
-    ws.on('message', (message) => {
-        const msg=message.toString();
-        console.log(`Received message: ${msg}`);
-        //room join logic
-        if(msg.startsWith('join:')){
-            const roomName=msg.split(':')[1];
-            ws.room=roomName;
-            if(!rooms[roomName]){
-                rooms[roomName]={sockets:[]};
-            }
-
-            rooms[roomName].sockets.push(ws);
-            console.log(`Client joined room: ${roomName}`);
-            ws.send(`Client joined room: ${roomName}`);
-            return ;
-
-
-        }
-
-        if(ws.room && rooms[ws.room]){
-            rooms[ws.room].sockets.forEach(socket=>{
-                if(socket !==ws && socket.readyState===WebSocket.OPEN){
-                    socket.send(`Message from ${ws.room}: ${msg}`);
-                }   
-            })
-        }else {
-      ws.send("⚠️ You must join a room first (send: join:roomName)");
-    }
-         
-        // Echo the message back to the client
-        ws.send(`Server received: ${message}`);
-    });
-    
-    ws.on('close', () => {
-
-        if (ws.room && rooms[ws.room]) {
-    rooms[ws.room].sockets = rooms[ws.room].sockets.filter(s => s !== ws);
-    if (rooms[ws.room].sockets.length === 0) {
-        delete rooms[ws.room]; // remove empty room
-    }
-}
-
-        console.log('Client disconnected');
-    });
+relayer.on("open", () => {
+  relayer.send(JSON.stringify({ type: "register", serverId: SERVER_ID }));
 });
 
+const wss = new WebSocketServer({ port: PORT });
+const rooms = {}; // { roomName: [sockets...] }
 
-module.exports= { wss, rooms };
+wss.on("connection", (ws) => {
+  ws.room = null;
+
+  ws.on("message", (raw) => {
+    const msg = raw.toString();
+
+    if (msg.startsWith("join:")) {
+      const room = msg.split(":")[1];
+      ws.room = room;
+
+      if (!rooms[room]) rooms[room] = [];
+      rooms[room].push(ws);
+
+      // Tell relayer this server knows this room
+      relayer.send(JSON.stringify({ type: "room-join", serverId: SERVER_ID, room }));
+
+      ws.send(`Joined room: ${room}`);
+    } else if (ws.room) {
+      // Forward message to relayer
+      relayer.send(JSON.stringify({
+        type: "message",
+        serverId: SERVER_ID,
+        room: ws.room,
+        content: msg
+      }));
+    }
+  });
+
+  ws.on("close", () => {
+    if (ws.room && rooms[ws.room]) {
+      rooms[ws.room] = rooms[ws.room].filter(s => s !== ws);
+    }
+  });
+});
+
+// Handle relayed messages
+relayer.on("message", (raw) => {
+  const msg = JSON.parse(raw);
+
+  if (msg.type === "relay") {
+    const { room, content } = msg;
+    if (rooms[room]) {
+      rooms[room].forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(`Room ${room}: ${content}`);
+        }
+      });
+    }
+  }
+});
+
+console.log(`WS Server ${SERVER_ID} running on ws://localhost:${PORT}`);
